@@ -1,0 +1,233 @@
+---
+title "Depmap dataset analysis"
+author: "Vignesh Shanmugam"
+date: "5/5/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries 
+
+```{r}
+library(tidyverse)
+library(taigr)
+library(arrow)
+library(ggplot2)
+library(dittoSeq)
+library(infercnv)
+library(ggrepel)
+library(ggrain)
+library(ggsci)
+```
+
+## Load and format cell line metadata, CRISPR and expression data 
+
+```{r}
+#Load 22Q2 public dataset 
+sample.info <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/HL_cell_lines_CRISPR_depmap_analysis/sample_info_22Q2.csv")
+CRISPR.gene.effect <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/HL_cell_lines_CRISPR_depmap_analysis/CRISPR_gene_effect_22Q2.csv")
+CRISPR.gene.dependency <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/HL_cell_lines_CRISPR_depmap_analysis/CRISPR_gene_dependency_22Q2.csv")
+CCLE.expression <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/HL_cell_lines_CRISPR_depmap_analysis/CCLE_expression_22Q2.csv")
+CRISPR.common.essentials <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/HL_cell_lines_CRISPR_depmap_analysis/CRISPR_common_essentials_22Q2.csv")
+
+##Strip gene name in common essential list 
+
+CRISPR.common.essentials <- CRISPR.common.essentials %>% mutate(gene = str_replace_all(gene, " .*",""))
+
+##Make dplyr compatible tables, remove common essential genes 
+
+##dependency score data - all cell lines 
+CRISPR.gene.dependency.all <- CRISPR.gene.dependency %>% as.data.frame() %>% pivot_longer(!DepMap_ID, names_to = "gene", values_to = "dependency_score") %>% mutate(gene_name = str_replace_all(gene, "\\..*", "")) %>% filter(!gene_name %in% CRISPR.common.essentials$gene)
+
+##gene effect data - all cell lines 
+CRISPR.gene.effect.all <- CRISPR.gene.effect %>% as.data.frame() %>% pivot_longer(!DepMap_ID, names_to = "gene", values_to = "gene_effect") %>% mutate(gene_name = str_replace_all(gene, "\\..*", "")) %>% filter(!gene_name %in% CRISPR.common.essentials$gene)
+
+```
+
+## Ranked gene effect scores for each of the 3 CHL cell lines (restricted to prioritized L-R interactions)
+
+```{r}
+
+#Cell lines of interest 
+
+#ACH-000702 - L1236 	
+#ACH-000754- L428 
+#ACH-001685 - UHO1
+
+LR_hits <- c(LR_final_filtered_nichenet$receptor, LR_final_filtered_nichenet$ligand) %>% unique()
+
+highlight_genes <- CRISPR.gene.effect.all %>% filter(gene_name %in% c("IL13RA1", "IL4R", "STAT6"))
+
+ggplot(CRISPR.gene.effect.all %>% filter(DepMap_ID == "ACH-000702", gene_name %in% LR_hits) %>% arrange(gene_effect), aes(x = fct_reorder(gene_name, gene_effect), y = gene_effect)) +
+  geom_point(size = 1) + 
+  geom_hline(yintercept = 0) +
+  geom_point(data = highlight_genes %>% filter(DepMap_ID == "ACH-000702",  gene_name %in% LR_hits), aes(x = gene_name, y = gene_effect, color = 'red', size = 1)) +
+  geom_label_repel(data = highlight_genes %>% filter(DepMap_ID == "ACH-000702", gene_name %in% LR_hits), aes(label = gene_name)) +
+  scale_x_discrete(expand = c(0.1, 0)) +
+  ylim(-2.0, NA) +
+  theme_classic() +
+    theme(axis.line.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text.y = element_text(size =12))
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/L1236_LR_dependency_ranked_plot_22Q2.pdf", height = 8, width = 4)
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/L1236_LR_dependency_ranked_plot_22Q2.png", height = 8, width = 4)
+
+
+ggplot(CRISPR.gene.effect.all %>% filter(DepMap_ID == "ACH-000754", gene_name %in% LR_hits) %>% arrange(gene_effect), aes(x = fct_reorder(gene_name, gene_effect), y = gene_effect)) +
+  geom_point(size = 1) + 
+  geom_hline(yintercept = 0) +
+  geom_point(data = highlight_genes %>% filter(DepMap_ID == "ACH-000754",  gene_name %in% LR_hits), aes(x = gene_name, y = gene_effect, color = 'red', size = 1)) +
+  geom_label_repel(data = highlight_genes %>% filter(DepMap_ID == "ACH-000754", gene_name %in% LR_hits), aes(label = gene_name)) +
+  scale_x_discrete(expand = c(0.1, 0)) +
+  ylim(-2.0, NA) +
+  theme_classic() +
+    theme(axis.line.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text.y = element_text(size =12))
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/L428_LR_dependency_ranked_plot_22Q2.pdf", height = 8, width = 4)
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/L428_LR_dependency_ranked_plot_22Q2.png", height = 8, width = 4)
+
+ggplot(CRISPR.gene.effect.all %>% filter(DepMap_ID == "ACH-001685", gene_name %in% LR_hits) %>% arrange(gene_effect), aes(x = fct_reorder(gene_name, gene_effect), y = gene_effect)) +
+  geom_point(size = 1) + 
+  geom_hline(yintercept = 0) +
+  geom_point(data = highlight_genes %>% filter(DepMap_ID == "ACH-001685",  gene_name %in% LR_hits), aes(x = gene_name, y = gene_effect, color = 'red', size = 1)) +
+  geom_label_repel(data = highlight_genes %>% filter(DepMap_ID == "ACH-001685", gene_name %in% LR_hits), aes(label = gene_name)) +
+  scale_x_discrete(expand = c(0.1, 0)) +
+  ylim(-2.0, NA) +
+  theme_classic() +
+    theme(axis.line.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text.y = element_text(size =12))
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/UHO1_LR_dependency_ranked_plot_22Q2.pdf", height = 8, width = 4)
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/UHO1_LR_dependency_ranked_plot_22Q2.png", height = 8, width = 4)
+
+```
+
+## Add cell line metadata and IL13 expression data 
+
+```{r}
+
+CRISPR.gene.effect.all <- CRISPR.gene.effect.all %>% left_join(sample.info, by = c("DepMap_ID"))
+
+##Pivot expression dataframe
+CCLE.expression <- CCLE.expression %>% as.data.frame() %>% rename(DepMap_ID = X) %>% pivot_longer(!DepMap_ID, names_to = "gene", values_to = "expression") %>% mutate(gene_name = str_replace_all(gene, "\\..*", "")) %>% filter(!gene_name %in% CRISPR.common.essentials$gene)
+CCLE.expression.IL13 <- CCLE.expression %>% filter(gene_name == "IL13")
+
+CRISPR.gene.effect.all.IL13.exp <- CRISPR.gene.effect.all %>% left_join(CCLE.expression.IL13 %>% select(DepMap_ID, expression), by = "DepMap_ID")
+
+##Save this integrated dataframe for future analysis 
+
+write.csv(CRISPR.gene.effect.all.IL13.exp, "/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/CRISPR_gene_effect_all_with_IL13_exp.csv")
+
+CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp <- CRISPR.gene.effect.all.IL13.exp %>% filter(gene_name %in% c("IL13RA1", "IL4R", "STAT6")) %>% pivot_wider(names_from = gene_name, values_from = gene_effect) %>% select(DepMap_ID, IL13RA1, IL4R,STAT6, expression)
+
+CRISPR.IL13RA1.gene.effect <- CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp %>% select(DepMap_ID, IL13RA1) %>% drop_na(IL13RA1)
+
+CRISPR.IL4R.gene.effect <- CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp %>% select(DepMap_ID, IL4R, expression) %>% drop_na(IL4R)
+
+CRISPR.STAT6.gene.effect <- CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp %>% select(DepMap_ID, STAT6) %>% drop_na(STAT6)
+
+CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp <- CRISPR.IL4R.gene.effect %>% left_join(CRISPR.IL13RA1.gene.effect, by = "DepMap_ID") %>% left_join(CRISPR.STAT6.gene.effect, by = "DepMap_ID") %>% left_join(sample.info, by = c("DepMap_ID"))
+CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp <- CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp %>% mutate(highlight = stripped_cell_line_name %in% c("L1236", "L428", "UHO1"))
+
+##Save dataframe for future analysis 
+
+write.csv(CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp, "/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/CRISPR_IL13RA1_IL4R_STAT6_gene_effect_IL13_exp_22Q2.csv")
+
+CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/CRISPR_IL13RA1_IL4R_STAT6_gene_effect_IL13_exp_22Q2.csv")
+
+
+```
+
+## Create pairwise marginal/scatter plots of IL13RA1, IL4R and STAT6 dependency
+
+```{r}
+p <- ggplot(CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp, aes(x = IL13RA1, y = STAT6, alpha = highlight)) + 
+  geom_point(show.legend = FALSE) +
+  geom_point(data = CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp %>% filter(highlight == TRUE), aes(x = IL13RA1, y = STAT6, color = 'red', size = 1)) +
+  theme_classic() + 
+    xlim(-2,NA)+
+  ylim(-2,NA)+
+  theme(legend.position = "none") + 
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  theme(axis.text.y = element_text(size =12),
+        axis.text.x = element_text(size =12))
+
+p2 <- ggMarginal(p, type = "boxplot", size = 15, fill = "#00A087FF", alpha = 0.6)
+p2
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/IL13RA1_STAT6_scatterplot_22Q2.pdf",height = 5, width = 5)
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/IL13RA1_STAT6_scatterplot_22Q2.png", height = 5, width = 5)
+
+p<- ggplot(CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp, aes(x = IL4R, y = STAT6, alpha = highlight)) + 
+  geom_point(show.legend = FALSE) + 
+  geom_point(data = CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp %>% filter(highlight == TRUE), aes(x = IL4R, y = STAT6, color = 'red', size = 1)) +
+  theme_classic() +
+    xlim(-2,NA)+
+  ylim(-2,NA)+
+  theme(legend.position = "none") + 
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  theme(axis.text.y = element_text(size =12),
+        axis.text.x = element_text(size =12))
+
+p2 <- ggMarginal(p, type = "boxplot", size = 15, fill = "#00A087FF", alpha = 0.6)
+p2
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/IL4R_STAT6_scatterplot_22Q2.pdf",height = 5, width = 5)
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/IL4R_STAT6_scatterplot_22Q2.png",height = 5, width = 5)
+
+p <- ggplot(CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp, aes(x = IL13RA1, y = IL4R, alpha = highlight)) + 
+  geom_point(show.legend = FALSE) + 
+  geom_point(data = CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp %>% filter(highlight == TRUE), aes(x = IL13RA1, y = IL4R, color = 'red', size = 1)) +
+  theme_classic() + 
+  xlim(-2,NA)+
+  ylim(-2,NA)+
+  theme(legend.position = "none") + 
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  theme(axis.text.y = element_text(size =12),
+        axis.text.x = element_text(size =12))
+
+p2 <- ggMarginal(p, type = "boxplot", size = 15, fill = "#00A087FF", alpha = 0.6)
+p2
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/IL4R_IL13RA1_scatterplot_22Q2.pdf", p2, height = 5, width = 5)
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/IL4R_IL13RA1_scatterplot_22Q2.png", p2, height = 5, width = 5)
+```
+
+## Rainplot of IL13 expression across depmap cell lines 
+```{r}
+##add another column to show HL cell lines vs non-HL cell lines 
+CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp <- CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp %>% mutate(HL_y_n = if_else(lineage_subtype == "hodgkin_lymphoma", "hodgkin_lymphoma", "other"))
+
+CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp <- CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp %>% mutate(cell_lines = "cell_lines")
+ggplot(CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp, aes(1, expression, fill = cell_lines)) +
+  geom_rain(size = 0.2, alpha = 0.5) +
+  geom_hline(yintercept = CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp %>% filter(DepMap_ID == "ACH-000702") %>% select(expression) %>% pull(), linetype = "dotted")+
+  geom_hline(yintercept = CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp %>% filter(DepMap_ID == "ACH-000754") %>% select(expression) %>% pull(), linetype = "dotted")+
+  geom_hline(yintercept = CRISPR.IL13RA1.IL4R.STAT6.gene.effect.IL13.exp %>% filter(DepMap_ID == "ACH-001685") %>% select(expression) %>% pull(), linetype = "dotted")+
+  theme_classic() +
+  theme(axis.title.y = element_blank(), 
+        axis.text.y = element_blank(), axis.ticks.y = element_blank()) +
+  coord_flip() + 
+  ylim(0,6) +
+   scale_color_npg()
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/IL13_expression_rainplot.pdf",height = 2, width = 5)
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/Depmap/IL13_expression_rainplot.png",height = 2, width = 5)
+```
+
+
