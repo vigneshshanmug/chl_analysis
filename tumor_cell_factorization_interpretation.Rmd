@@ -1,0 +1,352 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+## Load libraries 
+
+```{r}
+library(ggpubr)
+library(Seurat)
+library(SeuratDisk)
+library(RColorBrewer)
+library(gplots)
+library(Matrix)
+library(devtools)
+library(reshape2)
+library(ggrepel)
+library(plotly)
+library(tidyverse)
+library(ggrepel)
+library(Seurat)
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(stringr)
+library(Matrix)
+library(gplots) #for heatmaps
+library(DT) #interactive and searchable tables of our GSEA results
+library(GSEABase) #functions and methods for Gene Set Enrichment Analysis
+library(Biobase) #base functions for bioconductor; required by GSEABase
+library(gprofiler2) #tools for accessing the GO enrichment results using g:Profiler web resources
+library(clusterProfiler) # provides a suite of tools for functional enrichment analysis
+library(msigdbr) # access to msigdb collections directly within R
+library(enrichplot) # great for making the standard GSEA enrichment plots
+library(gghighlight)
+library(ggnewscale)
+library(ReactomePA)
+library(ggsci)
+library(org.Hs.eg.db)
+```
+
+## Load tumor cell seurat object 
+
+```{r}
+combined_tumor <- LoadH5Seurat("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/intratumor_heterogeneity/combined_tumor.h5Seurat")
+
+p1 <- DimPlot(combined_tumor, group.by = "ebv_status")
+p2 <- DimPlot(combined_tumor, group.by = "donor")
+p1+p2
+
+##EBV status is annotated incorrectly for H09-370 - true is positive 
+##Correct it here
+
+metadata <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/intratumor_heterogeneity/metadata_snrnaseq_CHL.csv")
+
+old_metadata <- combined_tumor@meta.data
+
+old_metadata$ebv_status <- NULL
+
+new_metadata <- old_metadata %>% left_join(metadata %>% select(donor, ebv_status) %>% distinct(), by = "donor")
+
+rownames(new_metadata) <- colnames(combined_tumor)
+
+combined_tumor@meta.data <- new_metadata
+```
+
+## PCA plot colored by EBV status 
+
+```{r}
+
+dittoDimPlot(combined_tumor, reduction.use = "pca", var = "ebv_status", do.ellipse = TRUE, dim.1 = 1, dim.2 = 2, size = 1)
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/HRS_DE_genes/pca_plot_ebv_all_cells.pdf")
+```
+
+##Interpretation of factorization results 
+
+```{r}
+
+##Load cell components matrix
+
+sample_factors <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/intratumor_heterogeneity/Tensor_factorization_full_object_final/cell_components_rank_20.csv")
+
+sample_factors_long <- sample_factors %>% pivot_longer(cols = starts_with("Factor_"), names_to = "factor", names_prefix = "Factor_", values_to = "weights")
+
+##Load gene components matrix 
+
+gene_factors <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/intratumor_heterogeneity/Tensor_factorization_full_object_final/gene_components_rank_20.csv")
+
+gene_factors_long <- gene_factors %>% pivot_longer(cols = starts_with("Factor_"), names_to = "factor", names_prefix = "Factor_", values_to = "weights")
+
+##Plot sample factors by donor 
+sample_factors_long %>% 
+  mutate(donor = fct_reorder(donor, factor, .fun='median')) %>% 
+ggplot(aes(x = donor, y = weights, fill = donor)) +
+  geom_boxplot() +
+  theme_classic() + 
+  facet_wrap(~factor)
+
+##load donor factor usage scores 
+
+donor_factor_pct <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/intratumor_heterogeneity/Tensor_factorization_full_object_final/donor_factor_percentages.csv")
+
+colnames(donor_factor_pct)[2:21] <- paste0("Factor_", rep(0:19))
+
+donor_factor_pct_long <- donor_factor_pct %>% pivot_longer(cols = starts_with("Factor_"), names_to = "factor", names_prefix = "Factor_", values_to = "pct")
+
+donor_factor_pct_long <- donor_factor_pct_long %>% select(donor_names, factor, pct)
+
+ggplot(donor_factor_pct_long, aes(x = pct)) + geom_histogram() + theme_minimal()
+
+## Select threshold as 30% 
+
+donor_factor_pct_long_sum <- donor_factor_pct_long %>% mutate(thresh = pct > 0.30) %>% group_by(factor) %>% summarize(count = sum(thresh))
+
+shared_factors <- donor_factor_pct_long_sum %>% arrange(desc(count)) %>% filter(count > 3) %>% select(factor) %>% pull()
+
+## Factors that seem most shared are - "1"  "11" "15" "16" "13" "5"  "8"  "0"  "10" "19" "4"
+
+##Load entropy-filtered tumor factors 
+
+entropy_filtered_tumor_factor_genes <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/intratumor_heterogeneity/Tensor_factorization_full_object_final/tumor_factors_entropy_filtered.csv")
+
+entropy_filtered_tumor_factor_genes_shared <- entropy_filtered_tumor_factor_genes %>% select(paste0("Factor_", shared_factors))
+
+##Calculate signature scores and plot on UMAP
+
+factors <- list()
+factor_ids <- shared_factors
+
+for (i in 1:length(factor_ids)) {
+  factors[[i]] <- gene_factors_long %>% filter(factor == factor_ids[i]) %>% arrange(desc(weights)) %>% head(100) %>% pull(X)
+}
+names(factors) <- factor_ids
+
+combined_tumor <- AddModuleScore(combined_tumor, features = factors)
+
+FeaturePlot(combined_tumor, features = rep(paste0("Cluster", 1:20)))
+
+##Enrichment analysis 
+
+##Create list of signatures 
+
+factors <- list()
+factor_ids <- shared_factors
+
+for (i in 1:length(factor_ids)) {
+  factors[[i]] <- gene_factors_long %>% filter(factor == factor_ids[i]) %>% arrange(desc(weights)) %>% head(200) %>% pull(X)
+}
+names(factors) <- factor_ids
+factors <- factors[c("1", "15", "13", "8", "4", "11", "16", "10")]
+factor_annotations <- c("cytokine_1", "proliferation_15", "translation_13", "Bcell_8", "histone_4", "neuronal_11", "neuronal_16", "neuronal_10")
+names(factors) <- factor_annotations
+
+##subset to signatures of interest - 1, 15, 13, 8, 4, 11, 16, 10
+
+##Run ORA on each of the signatures 
+
+reactome_results <- list()
+reactome_results_df <- list()
+
+for (i in 1:length(factors)){
+  entrez_id_conv <- bitr(factors[[i]], fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+  reactome_results[[i]] <- enrichPathway(gene=entrez_id_conv$ENTREZID,  pvalueCutoff = 0.05, readable=TRUE)
+  reactome_results_df[[i]] <- reactome_results[[i]]@result %>% filter(qvalue < 0.05)
+}
+names(reactome_results) <- factor_annotations
+names(reactome_results_df) <- factor_annotations
+
+factors_entrez_id <- list()
+
+for (i in 1:length(factors)){
+  entrez_id <- bitr(factors[[i]], fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+  factors_entrez_id[[i]] <- entrez_id$ENTREZID
+}
+names(factors_entrez_id) <- c("cytokine_1", "proliferation_15", "translation_13", "Bcell_8", "histone_4", "neuronal_11", "neuronal_16", "neuronal_10")
+
+reactome_compare <- compareCluster(geneCluster = factors_entrez_id, fun = enrichPathway)
+reactome_compare@readable <- FALSE
+reactome_compare <- setReadable(reactome_compare, OrgDb = org.Hs.eg.db, keyType="ENTREZID")
+
+dotplot(reactome_compare)
+
+
+kegg_results <- list()
+kegg_results_df <- list()
+
+for (i in 1:length(factors)){
+  entrez_id_conv <- bitr(factors[[i]], fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+  kegg_results[[i]] <- enrichKEGG(gene=entrez_id_conv$ENTREZID,  organism = 'hsa', pvalueCutoff = 0.05) %>% setReadable(OrgDb = org.Hs.eg.db, keyType="ENTREZID")
+  kegg_results_df[[i]] <- kegg_results[[i]]@result %>% filter(qvalue < 0.05)
+}
+names(kegg_results) <- factor_annotations
+names(kegg_results_df) <- factor_annotations
+
+kegg_compare <- compareCluster(geneCluster = factors_entrez_id, fun = enrichKEGG)
+kegg_compare@readable <- FALSE
+kegg_compare <- setReadable(kegg_compare, OrgDb = org.Hs.eg.db, keyType="ENTREZID")
+
+dotplot(kegg_compare)
+
+
+hallmark_sets <- msigdbr(species = "Homo sapiens", category = "H") %>% 
+  dplyr::select(gs_name, human_gene_symbol)
+
+hallmark_results <- list()
+hallmark_results_df <- list()
+
+for (i in 1:length(factors)){
+  hallmark_results[[i]] <- enricher(gene = factors[[i]], TERM2GENE=hallmark_sets)
+  hallmark_results_df[[i]] <- hallmark_results[[i]]@result %>% filter(qvalue < 0.05)
+}
+
+names(hallmark_results) <- factor_annotations
+names(hallmark_results_df) <- factor_annotations
+
+
+GO_BP_sets <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP") %>% 
+  dplyr::select(gs_name, human_gene_symbol)
+
+GO_BP_results <- list()
+GO_BP_results_df <- list()
+
+for (i in 1:length(factors)){
+  GO_BP_results[[i]] <- enricher(gene = factors[[i]], TERM2GENE=GO_BP_sets)
+  GO_BP_results_df[[i]] <- GO_BP_results[[i]]@result %>% filter(qvalue < 0.05)
+}
+
+names(GO_BP_results) <- factor_annotations
+names(GO_BP_results_df) <- factor_annotations
+
+GO_compare <- compareCluster(geneCluster = factors_entrez_id, fun = enrichGO, OrgDb = org.Hs.eg.db, ont = "BP")
+GO_compare@readable <- FALSE
+GO_compare <- setReadable(GO_compare, OrgDb = org.Hs.eg.db, keyType="ENTREZID")
+
+dotplot(GO_compare)
+
+cell_type_sets <- msigdbr(species = "Homo sapiens", category = "C8") %>% 
+  dplyr::select(gs_name, human_gene_symbol)
+
+cell_type_results <- list()
+cell_type_results_df <- list()
+
+for (i in 1:length(factors)){
+  cell_type_results[[i]] <- enricher(gene = factors[[i]], TERM2GENE=cell_type_sets)
+  cell_type_results_df[[i]] <- cell_type_results[[i]]@result %>% filter(qvalue < 0.05)
+}
+names(cell_type_results) <- factor_annotations
+names(cell_type_results_df) <- factor_annotations
+
+
+##Create facet plots 
+
+dot_plot <- function(factors_to_plot = x, gene_set_results = y){
+  plots <- list()
+  for (i in 1:length(factors_to_plot)){
+    if (dim(gene_set_results[[factors_to_plot[i]]])[1] > 0){
+      plots[[i]] <- dotplot(gene_set_results[[factors_to_plot[i]]], font.size = 5)
+    }
+  }
+  ggarrange(plotlist = plots, labels = factors_to_plot)
+}
+
+dot_plot(factors_to_plot = factor_annotations, gene_set_results = reactome_results)
+dot_plot(factors_to_plot = factors, gene_set_results = kegg_results)
+dot_plot(factors_to_plot = factors, gene_set_results = hallmark_results)
+dot_plot(factors_to_plot = factors, gene_set_results = GO_BP_results)
+dot_plot(factors_to_plot = factor_annotations, gene_set_results = cell_type_results)
+
+dotplot(cell_type_results[["neuronal_11"]], font.size = 5, showCategory = c("MANNO_MIDBRAIN_NEUROTYPES_HNBML5"))
+
+##combine cell type and reactome results together in one big dataframe 
+
+combined_reactome_cell_type <- c(reactome_results_df, cell_type_results_df)
+
+df <- tibble::enframe(combined_reactome_cell_type, name = "Name", value = "Value")
+df_long <- unnest_longer(df, Value)
+df_long <- unnest(df_long, Value)
+
+df_long_plot <- df_long %>% filter(ID %in% c("R-HSA-6785807", "R-HSA-449147", "R-HSA-68886", "R-HSA-69620", "R-HSA-3247509", "R-HSA-4839726", "R-HSA-112316", "MANNO_MIDBRAIN_NEUROTYPES_HNBML5"), Name %in%  c("cytokine_1", "proliferation_15", "histone_4", "neuronal_11", "neuronal_16", "neuronal_10")) %>% select(Name, ID, Description, GeneRatio, Count, p.adjust) %>% mutate(log.p.adjust = -log10(p.adjust))
+
+saveRDS(df_long_plot, "df_long_plot.rds")
+df_long_plot <- df_long_plot %>% mutate(GeneRatio = sapply(GeneRatio, function(x) eval(parse(text = x))))
+
+desired_order_rows <- c("cytokine_1", "proliferation_15", "histone_4", "neuronal_11", "neuronal_16", "neuronal_10")
+df_long_plot$Name <- factor(df_long_plot$Name, levels = rev(desired_order_rows))
+
+desired_order_columns<- c("Interleukin-4 and Interleukin-13 signaling", "Signaling by Interleukins", "M Phase", "Cell Cycle Checkpoints", "Chromatin modifying enzymes", "Chromatin organization", "Neuronal System", "MANNO_MIDBRAIN_NEUROTYPES_HNBML5")
+df_long_plot$Description <- factor(df_long_plot$Description, levels = desired_order_columns)
+
+ggplot(df_long_plot, aes(x = Description, y = Name)) +
+  geom_point(aes(size = GeneRatio, color = p.adjust)) +
+  scale_color_gradient(low = "red", high = "blue")+
+  scale_size(range = c(3, 10)) +
+  labs(
+    x = "Programs",
+    y = "Gene sets",
+    size = "Enrichment Score",
+    color = "adjusted p-value"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5, size = 16)
+  )
+
+##save plot for publication
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/intratumor_heterogeneity/enrichment_dotplot.pdf", width = 7, height = 7)
+
+##Test which factors are EBV associated
+ggplot(sample_factors_long, aes(x=ebv_status, y=weights, fill = ebv_status)) + 
+    geom_boxplot() +
+  theme_classic() + 
+  facet_wrap(~factor) + stat_compare_means()
+
+##by donor
+
+sample_factors_long_by_donor <- sample_factors_long %>% group_by(donor, factor) %>% summarise(mean_weights = mean(weights), median_weights = median(weights))
+
+sample_factors_long <- sample_factors_long %>% left_join(sample_factors_long_by_donor, by = c("donor", "factor"))
+
+ggplot(sample_factors_long %>% select(donor, ebv_status, factor, mean_weights, median_weights) %>% distinct(), aes(x=ebv_status, y=mean_weights, fill = ebv_status)) + 
+    geom_boxplot() +
+  geom_jitter() +
+  theme_classic() + 
+  facet_wrap(~factor) + stat_compare_means()
+
+
+##Focus on neuronal factors 10 and 11
+
+setwd("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/intratumor_heterogeneity/")
+
+ggplot(sample_factors_long %>% select(donor, ebv_status, factor, mean_weights, median_weights) %>% filter(factor == "10") %>% distinct(), aes(x=ebv_status, y=mean_weights, fill = ebv_status)) + 
+    geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  stat_compare_means(vjust = -2) + 
+  scale_fill_npg()
+
+##publication figure
+
+ggboxplot(sample_factors_long %>% select(donor, ebv_status, factor, mean_weights, median_weights) %>% filter(factor == "10") %>% distinct(), x = "ebv_status", y = "mean_weights", color = "ebv_status", add = "jitter", legend = "right") + stat_compare_means() + scale_color_npg()
+
+ggsave("factor10_ebv_boxplot.pdf", width = 4, height = 5)
+
+ggboxplot(sample_factors_long %>% select(donor, ebv_status, factor, mean_weights, median_weights) %>% filter(factor == "11") %>% distinct(), x = "ebv_status", y = "mean_weights", color = "ebv_status", add = "jitter", legend = "right") + stat_compare_means() + scale_color_npg()
+
+ggsave("factor11_ebv_boxplot.pdf", width = 4, height = 5)
+
+```
