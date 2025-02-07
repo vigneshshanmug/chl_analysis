@@ -1,0 +1,244 @@
+---
+title: "010123_cell_type_enrichment_analysis"
+author: "Vignesh Shanmugam"
+date: "2023-01-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries 
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(cowplot)
+library(RColorBrewer)
+library(Seurat)
+library(forcats)
+library(plotrix)
+library(dittoSeq)
+```
+
+## Load all csv files with enrichment summaries - SlideseqV2
+
+```{r}
+#load all files  
+p_values_up <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/New/adjusted_aggragated_p_values.csv")
+  
+p_values_down <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/New/adjusted_aggragated_p_values_down.csv")
+  
+mean_ratios <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/New/mean_enrichment.csv")
+
+#Pivot to longer tables with cell types 
+p_values_up <- p_values_up %>% pivot_longer(!radius, names_to = "cell_types", values_to = "p_values_up")
+p_values_down <- p_values_down %>% pivot_longer(!radius, names_to = "cell_types", values_to = "p_values_down")
+mean_ratios <- mean_ratios %>% pivot_longer(!radius, names_to = "cell_types", values_to = "mean_ratios")
+
+#Combine all p values in one table
+combined_df <- mean_ratios %>% left_join(p_values_up, by = c("radius", "cell_types")) %>% left_join(p_values_down, by = c("radius", "cell_types"))
+#combined_df$cell_types <- as.factor(combined_df$cell_types)
+
+#load tables for each length scale to generate summary statistics 
+
+radius_20_enrichment_ratios_df <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/New/radius_20_enrichment_ratios_df.csv")
+
+radius_50_enrichment_ratios_df <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/New/radius_50_enrichment_ratios_df.csv")
+
+radius_100_enrichment_ratios_df <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/New/radius_100_enrichment_ratios_df.csv")
+
+radius_150_enrichment_ratios_df <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/New/radius_150_enrichment_ratios_df.csv")
+
+radius_200_enrichment_ratios_df <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/New/radius_200_enrichment_ratios_df.csv")
+
+##Combine all the above tables into on combined long dataframe
+combined_by_sample <- list(radius_20_enrichment_ratios_df, radius_50_enrichment_ratios_df, radius_100_enrichment_ratios_df, radius_150_enrichment_ratios_df, radius_200_enrichment_ratios_df)
+
+names(combined_by_sample) <- c(20, 50, 100, 150, 200)
+
+combined_by_sample <- bind_rows(combined_by_sample, .id = "radius")
+combined_by_sample <- combined_by_sample %>% pivot_longer(cols = colnames(combined_by_sample)[3:16],  names_to = "cell_types", values_to = "ratios" )
+
+##Add sample information 
+
+sample_metadata <- data.frame(
+  stringsAsFactors = FALSE,
+       pucks = c("2020-12-12_Puck_201014_05", "2020-12-12_Puck_201014_06", "2021-04-14_Puck_210119_21", "2021-04-14_Puck_210119_22", "2021-11-29_Puck_211018_21", "2021-11-29_Puck_211018_23", "2021-09-30_Puck_210824_14", "2021-09-30_Puck_210824_15", "2021-11-29_Puck_211022_02", "2021-11-29_Puck_211022_03", "2021-11-29_Puck_210810_23", "2021-11-29_Puck_210810_24", "2021-09-30_Puck_210824_17", "2021-11-29_Puck_210731_11", "2021-11-29_Puck_210731_12", "2021-11-29_Puck_210731_13", "2021-09-30_Puck_210824_19", "2021-09-30_Puck_210824_20", "2021-11-29_Puck_210720_27", "2021-11-29_Puck_210720_28", "2021-11-29_Puck_210720_29", "2021-10-08_Puck_210910_27", "2021-11-29_Puck_211008_39/", "2021-11-29_Puck_211018_01", "2020-12-12_Puck_201014_03", "2020-12-12_Puck_201014_04", "2021-11-29_Puck_211018_32", "2021-11-29_Puck_211018_38", "2021-11-11_Puck_210910_04", "2021-11-11_Puck_210910_03", "2021-11-29_Puck_211018_28", "2021-11-29_Puck_211018_31", "2021-11-11_Puck_210910_05", "2021-11-11_Puck_210910_06", "2020-12-22_Puck_200827_12", "2021-01-20_Puck_200906_25", "2021-10-16_Puck_210910_01", "2021-10-16_Puck_210910_02", "2021-11-29_Puck_211018_18", "2021-11-29_Puck_211018_19", "2021-11-29_Puck_211018_26", "2021-11-29_Puck_211018_27", "2021-11-11_Puck_210910_07", "2021-11-11_Puck_210910_09", "2021-11-29_Puck_211018_29", "2021-11-29_Puck_211018_24", "2021-11-13_Puck_211008_08", "2021-11-29_Puck_211008_34", "2021-11-29_Puck_211008_38", "2021-11-13_Puck_211008_09", "2021-11-29_Puck_211018_04", "2021-11-29_Puck_211018_07", "2021-11-13_Puck_211008_06", "2021-11-29_Puck_211008_27", "2021-11-29_Puck_211008_28", "2021-11-29_Puck_211008_32", "2021-11-13_Puck_211004_39", "2021-11-29_Puck_211018_02", "2021-11-29_Puck_211018_03", "2021-11-13_Puck_211008_07", "2021-11-29_Puck_211018_17", "2021-11-13_Puck_211008_03", "2021-11-29_Puck_211018_11"),
+            samples = c("H12-335-A", "H12-335-A", "H09-58", "H09-58", "H08-381-A", "H08-381-A", "H07-275", "H07-275", "H07-275", "H07-275", "H07-275", "H07-275", "H07-266", "H07-266", "H07-266", "H07-266", "H07-240", "H07-240", "H07-240", "H07-240", "H07-240", "30824-2", "30824-2", "30824-2", "H12-200", "H12-200", "H07-187", "H07-187", "H07-187", "H07-187", "H07-161", "H07-161", "H07-161", "H07-161", "31111", "31111", "H09-370", "H09-370", "H09-370", "H09-370", "H07-281-B", "H07-281-B", "H07-281-B", "H07-281-B", "28512", "28512", "28512", "28427", "28427", "28427", "26015", "26015", "26015", "26012", "26012", "26012", "26012", "25899", "25899", "25899", "24979", "24979", "24979"), 
+  ebv_status = c(NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, "negative", "negative", "negative", "negative", "negative", "negative", "positive", "positive", "positive", "positive", "positive", "positive", "positive", "positive", "positive", "positive", "negative", "negative", "negative", "negative", "negative", "negative", "negative", "positive", "positive", "positive", "negative", "negative", "negative", "positive", "positive", "positive", "positive", "negative", "negative", "negative", "positive", "positive", "positive")
+)
+
+combined_by_sample <- combined_by_sample %>% left_join(sample_metadata, by = "pucks")
+
+summary_stats <- combined_by_sample %>% group_by(radius, cell_types, samples) %>% summarize(mean = mean(ratios)) %>% group_by(radius, cell_types) %>% summarize(mean_of_means = mean(mean), se = std.error(mean))
+
+##Add standard errors and means 
+summary_stats$radius <- as.integer(summary_stats$radius)
+combined_df <- combined_df %>% left_join(summary_stats, by = c("radius", "cell_types"))
+
+#Create a new column with unified p values
+combined_df <- combined_df %>% mutate(p_value = if_else(mean_ratios > 1, p_values_up, p_values_down))
+
+
+##add z-scores and associated p values 
+
+combined_df <- combined_df %>% mutate(z_score = (log2(mean_of_means) - 0)/se) %>% mutate(p_val_z = 2 * pnorm(-abs(z_score)))
+
+#Add a column indicating signiificance which will be used for plotting below
+combined_df <- combined_df %>% mutate(cell_types = fct_reorder(cell_types, mean_of_means)) %>% mutate(signif = p_val_z <0.01 & abs(log2(mean_of_means)) > 0.2)
+
+##cap p-values 
+
+combined_df <- combined_df %>% mutate(p_val_z_capped = case_when(p_val_z >= 0.05 ~ 1, p_val_z < 0.00001 ~ 0.00001, TRUE ~ p_val_z))
+
+##Compare EBV+  and EBV- 
+
+summary_stats_ebv <- combined_by_sample %>% group_by(radius, cell_types, samples, ebv_status) %>% summarize(mean = mean(ratios)) %>% group_by(radius, cell_types, ebv_status) %>% summarize(mean_of_means = mean(mean), se = std.error(mean))
+
+
+##add z-scores and associated p values 
+
+summary_stats_ebv <- summary_stats_ebv %>% mutate(z_score = (log2(mean_of_means) - 0)/se) %>% mutate(p_val_z = 2 * pnorm(-abs(z_score)))
+summary_stats_ebv <- summary_stats_ebv %>% mutate(p_val_z_capped = case_when(p_val_z >= 0.05 ~ 1, p_val_z < 0.00001 ~ 0.00001, TRUE ~ p_val_z))
+
+```
+
+## Summary figure
+
+```{r}
+#Plot for radius = 200
+combined_df$cell_types <- factor(combined_df$cell_types, levels = c("CD4_T_cells", "FDC", "Monocytes", "mDC", "NK_cells", "CD8_T_cells", "B_cells", "Fibroblasts", "pDC", "Plasma_cells"))
+
+ggplot(combined_df %>% filter(radius == 200, cell_types %in% c("CD4_T_cells", "FDC", "Monocytes", "mDC", "NK_cells", "CD8_T_cells", "B_cells", "Fibroblasts", "pDC", "Plasma_cells")), aes(x = fct_reorder(cell_types, dplyr::desc(mean_of_means)), y = log2(mean_of_means), color = cell_types)) + 
+  geom_point(aes(size = -log10(p_val_z_capped))) + 
+  geom_hline(yintercept = 0) +
+  ylim(-1, 1) +
+  #scale_size(range = c(1, 5)) +
+  geom_errorbar(aes(ymin = log2(mean_of_means-se), ymax = log2(mean_of_means + se)), width = 0.2, color = "black") +
+  theme_classic() + 
+  labs(y = "Mean log enrichment ratio", x = NULL, color = "Cell type", size = "-log10(p-value)") + 
+  #scale_alpha_discrete("", range = c(0.5, 1.0), labels = c('Not significant', 'Significant'))+ 
+  scale_color_discrete(type = dittoColors(), label = c("CD4+ T cells", "FDC", "Monocytes/Macrophages", "mDC", "NK cells", "CD8+ T cells", "B cells", "Fibroblasts", "pDC", "Plasma cells")) +
+  guides(color = guide_legend(order = 1), size = guide_legend(order = 2), alpha = guide_legend(order = 3, legend.position = "bottom"))+
+  theme(axis.line.x = element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text.y = element_text(size =12),
+        legend.text=element_text(size=12))
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/cell_type_enrichment_capped_pvals.pdf")
+
+```
+
+## Load enrichment summary files for validation CosMx dataset 
+
+```{r}
+
+p_values_up <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/cosmx/aggragated_pvalues.csv")
+
+p_values_down <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/cosmx/aggragated_pvalues_down.csv")
+
+mean_ratios <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/cosmx/Mean_enrichment.csv")
+
+p_values_up <- p_values_up %>% pivot_longer(!radius, names_to = "cell_types", values_to = "p_values_up")
+p_values_down <- p_values_down %>% pivot_longer(!radius, names_to = "cell_types", values_to = "p_values_down")
+mean_ratios <- mean_ratios %>% pivot_longer(!radius, names_to = "cell_types", values_to = "mean_ratios")
+
+#Combine all p values in one table
+combined_df <- mean_ratios %>% left_join(p_values_up, by = c("radius", "cell_types")) %>% left_join(p_values_down, by = c("radius", "cell_types"))
+combined_df$cell_types <- as.factor(combined_df$cell_types)
+
+#load tables for each length scale to generate summary statistics 
+
+radius_20_enrichment_ratios_df <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/cosmx/radius_20/Summary_df.csv")
+
+radius_50_enrichment_ratios_df <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/cosmx/radius_50/Summary_df.csv")
+
+radius_100_enrichment_ratios_df <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/cosmx/radius_100/Summary_df.csv")
+
+radius_150_enrichment_ratios_df <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/cosmx/radius_150/Summary_df.csv")
+
+radius_200_enrichment_ratios_df <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/cosmx/radius_200/Summary_df.csv")
+
+##Combine all the above tables into on combined long dataframe
+combined_by_sample <- list(radius_20_enrichment_ratios_df, radius_50_enrichment_ratios_df, radius_100_enrichment_ratios_df, radius_150_enrichment_ratios_df, radius_200_enrichment_ratios_df)
+
+names(combined_by_sample) <- c(20, 50, 100, 150, 200)
+
+combined_by_sample <- bind_rows(combined_by_sample, .id = "radius")
+combined_by_sample <- combined_by_sample %>% pivot_longer(cols = colnames(combined_by_sample)[5:16],  names_to = "cell_types", values_to = "ratios" )
+
+summary_stats <- combined_by_sample %>% group_by(radius, cell_types, patient) %>% summarize(mean = mean(ratios)) %>% group_by(radius, cell_types) %>% summarize(mean_of_means = mean(mean), se = std.error(mean))
+
+##Add standard errors and means 
+summary_stats$radius <- as.integer(summary_stats$radius)
+combined_df <- combined_df %>% left_join(summary_stats, by = c("radius", "cell_types"))
+
+#Create a new column with unified p values
+combined_df <- combined_df %>% mutate(p_value = if_else(mean_ratios > 1, p_values_up, p_values_down))
+
+#Add a column indicating significance which will be used for plotting below
+
+combined_df <- combined_df %>% mutate(cell_types = fct_reorder(cell_types, desc(mean_ratios))) %>% mutate(signif = p_value <1e-10 & abs(log2(mean_of_means)) > 0.3)
+
+```
+
+## Summary figure
+
+```{r}
+
+ggplot(combined_df %>% filter(radius == 20) %>% mutate(cell_types = fct_reorder(cell_types, mean_of_means, .desc = TRUE)) %>% filter(cell_types %in% c("CD4_T_cells", "Mono.macs", "mDC", "CD8_T_cells", "NK_cells", "LEC", "Fibroblasts", "BEC", "B_cells", "Plasma_cells")), aes(x = cell_types, y = log2(mean_of_means), color = cell_types)) + 
+  geom_point(aes(size = -log10(p_value))) + 
+  geom_hline(yintercept = 0) +
+  ylim(-1.0, 0.5) + 
+  geom_errorbar(aes(ymin = log2(mean_of_means-1.96*se), ymax = log2(mean_of_means + 1.96*se)), width = 0.2, color = "black") +
+  theme_classic() + 
+  labs(y = "Mean log enrichment ratio", x = NULL, color = "Cell type", size = "P-value") + 
+  #scale_alpha_discrete("", range = c(0.5, 1.0), labels = c('Not significant', 'Significant'))+ 
+  scale_color_discrete(type = dittoColors(), labels = c("CD4+ T cells", "Monocytes/macrophages", "mDC", "CD8+ T cells", "NK cells", "LEC", "Fibroblasts", "BEC", "B cells", "Plasma cells")) +
+  guides(color = guide_legend(order = 1), size = guide_legend(order = 2), alpha = guide_legend(order = 3, legend.position = "bottom"))+
+  theme(axis.line.x = element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text.y = element_text(size =12),
+        legend.text=element_text(size=12))
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/cell_type_enrichment_cosmx.pdf")
+
+
+##add z-scores and associated p values 
+
+combined_df <- combined_df %>% mutate(z_score = (log2(mean_of_means) - 0)/se) %>% mutate(p_val_z = 2 * pnorm(-abs(z_score)))
+
+#Add a column indicating signiificance which will be used for plotting below
+combined_df <- combined_df %>% mutate(cell_types = fct_reorder(cell_types, mean_of_means)) %>% mutate(signif = p_val_z <0.01 & abs(log2(mean_of_means)) > 0.2)
+
+##cap p-values 
+
+combined_df <- combined_df %>% mutate(p_val_z_capped = case_when(p_val_z >= 0.05 ~ 1, p_val_z < 0.00001 ~ 0.00001, TRUE ~ p_val_z))
+
+
+## re do plot with cappped p values 
+
+ggplot(combined_df %>% filter(radius == 20, cell_types %in% c("CD4_T_cells", "Mono.macs", "mDC", "CD8_T_cells", "NK_cells", "LEC", "Fibroblasts", "BEC", "B_cells", "Plasma_cells")) %>% mutate(cell_types = fct_reorder(cell_types, mean_of_means, .desc = TRUE)), aes(x = cell_types, y = log2(mean_of_means), color = cell_types)) + 
+  geom_point(aes(size = -log10(p_val_z_capped))) + 
+  geom_hline(yintercept = 0) +
+  ylim(-0.75, 0.5) +
+  #scale_size(range = c(1, 5)) +
+  geom_errorbar(aes(ymin = log2(mean_of_means-se), ymax = log2(mean_of_means + se)), width = 0.2, color = "black") +
+  theme_classic() + 
+  labs(y = "Mean log enrichment ratio", x = NULL, color = "Cell type", size = "-log10(p-value)") + 
+  #scale_alpha_discrete("", range = c(0.5, 1.0), labels = c('Not significant', 'Significant'))+ 
+  scale_color_discrete(type = dittoColors(), label = c("CD4+ T cells", "Monocytes/macrophages", "mDC", "CD8+ T cells", "NK cells", "LEC", "Fibroblasts", "BEC", "B cells", "Plasma cells"))+
+  guides(color = guide_legend(order = 1), size = guide_legend(order = 2), alpha = guide_legend(order = 3, legend.position = "bottom"))+
+  theme(axis.line.x = element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text.y = element_text(size =12),
+        legend.text=element_text(size=12))
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/Enrichment_analysis/cell_type_enrichment_cosmx_capped_pvals.pdf")
+
+```
