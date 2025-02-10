@@ -1,0 +1,662 @@
+---
+title: "111522_CSIDE_results_exploration"
+author: "Vignesh Shanmugam"
+date: "2022-11-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+
+```{r}
+library(RColorBrewer)
+library(gplots)
+library(spacexr)
+library(Matrix)
+library(devtools)
+library(reshape2)
+library(ggrepel)
+library(plotly)
+library(tidyverse)
+library(ggrepel)
+library(Seurat)
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(stringr)
+library(Matrix)
+library(gplots) #for heatmaps
+library(DT) #interactive and searchable tables of our GSEA results
+library(GSEABase) #functions and methods for Gene Set Enrichment Analysis
+library(Biobase) #base functions for bioconductor; required by GSEABase
+library(gprofiler2) #tools for accessing the GO enrichment results using g:Profiler web resources
+library(clusterProfiler) # provides a suite of tools for functional enrichment analysis
+library(msigdbr) # access to msigdb collections directly within R
+library(enrichplot) # great for making the standard GSEA enrichment plots
+library(gghighlight)
+library(ggnewscale)
+library(ReactomePA)
+library(liana)
+library(ggsci)
+```
+## Load CSIDE results with density as explanatory variable
+
+```{r}
+
+##load all CSIDE results
+
+cell_types <- c("B_cells", "BEC", "CD4_T_cells", "CD8_T_cells", "FDC", "Fibroblasts", "LEC", "Macrophages", "mDC", "Monocytes", "NK_cells", "pDC", "Plasma_cells", "Tumor")
+
+cside_results <- list()
+
+for (i in 1:length(cell_types)) {
+  cside_results[[i]] <- read.csv(paste0("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/CSIDE_repeat/density/", cell_types[i], "_cell_type_genes_all.csv"))
+}
+
+names(cside_results) <- cell_types
+
+cside_results_combined_slideseq_density <- bind_rows(cside_results, .id = "cell_type")
+
+#Load Consensus resource from LIANA
+
+consensus_omni <- select_resource("Consensus")[[1]] %>% decomplexify() %>% select(source_genesymbol, target_genesymbol) %>% distinct()
+L_R_genes <- c(consensus_omni$source_genesymbol, consensus_omni$target_genesymbol) %>% unique()
+Ligand_genes <- c(consensus_omni$source_genesymbol) %>% unique()
+colnames(cside_results_combined_slideseq_density)[2] <- "gene_name"
+
+#List of interesting genes to keep
+int_genes <- c("TNF", "TNFRSF11A", "TNFRSF4", "TNFRSF8", "TNFSF8", "TNFSF4", "TNFAIP6", "IL1B", "IL6", "CCL3", "CCL4", "CCL2", "TREM1", "LTA", "LTB", "CD274", "SIRPA", "CXCL3", "CD47", "CXCL8", "CD274", "PDCD1LG2", "CD83", "CD86", "PDCD1", "IL10", "LAG3", "CTLA4", "IL4", "IL13")
+
+cside_results_combined_slideseq_density_LR <- cside_results_combined_slideseq_density %>% filter(gene_name %in% L_R_genes | gene_name %in% int_genes)
+
+```
+
+## Load CSIDE results with proximity as explanatory variable
+
+```{r}
+##Load data 
+##load all CSIDE results
+
+cell_types <- c("B_cells", "BEC", "CD4_T_cells", "CD8_T_cells", "FDC", "Fibroblasts", "LEC", "Macrophages", "mDC", "Monocytes", "Plasma_cells")
+
+cside_results <- list()
+
+for (i in 1:length(cell_types)) {
+  cside_results[[i]] <- read.csv(paste0("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/CSIDE_repeat/proximity/", cell_types[i], "_cell_type_genes_all.csv"))
+}
+
+names(cside_results) <- cell_types
+
+cside_results_combined_slideseq_proximity <- bind_rows(cside_results, .id = "cell_type")
+
+#Add gene annotation from Omnipath
+colnames(cside_results_combined_slideseq_proximity)[2] <- "gene_name"
+
+cside_results_combined_slideseq_proximity_LR <- cside_results_combined_slideseq_proximity %>% filter(gene_name %in% L_R_genes | gene_name %in% int_genes)
+```
+
+```{r}
+##Combine lists 
+
+cside_results_combined_slideseq <- list(cside_results_combined_slideseq_density, cside_results_combined_slideseq_proximity)
+names(cside_results_combined_slideseq) <- c("density", "proximity")
+cside_results_combined_slideseq <- bind_rows(cside_results_combined_slideseq, .id = "spatial_metric")
+
+cside_results_combined_slideseq_LR <- list(cside_results_combined_slideseq_density_LR, cside_results_combined_slideseq_proximity_LR)
+names(cside_results_combined_slideseq_LR) <- c("density", "proximity")
+cside_results_combined_slideseq_LR <- bind_rows(cside_results_combined_slideseq_LR, .id = "spatial_metric")
+
+cside_results_combined_slideseq_LR_IE <- list(cside_results_combined_slideseq_density_LR_IE, cside_results_combined_slideseq_proximity_LR_IE)
+names(cside_results_combined_slideseq_LR_IE) <- c("density", "proximity")
+cside_results_combined_slideseq_LR_IE <- bind_rows(cside_results_combined_slideseq_LR_IE, .id = "spatial_metric")
+##This the final list to use for downstream analysis 
+
+##DE genes with less stringent ct_prop threshold 
+
+cside_results_combined_slideseq_density_LR_IE_less_stringent <- cside_results_combined_slideseq_LR %>% filter(log_fc_est > 0.5 & q_val < 0.05 & ct_prop > 0.5) %>% filter(cell_type %in% c("CD4_T_cells", "Monocytes/macrophages", "mDC", "Fibroblasts", "FDC")) %>% filter(gene_name %in% Ligand_genes) 
+
+##Add column indicating expression of gene in HRS cells and filter out 
+
+HRS_ligands <- L_R_final_df %>% filter(source == "Tumor") %>% select(ligand.complex) %>% unique() %>% pull()
+
+hrs_markers_deseq_de <- hrs_markers_deseq %>% filter(avg_log2FC > 0.5, p_val_adj < 0.05) %>% select(X) %>% pull()
+
+```
+
+
+```{r}
+##Cosmx CSIDE analysis 
+
+##Load CSIDE outputs 
+
+cell_types <- c("mDC", "Tumor", "Plasma_cells", "NK_cells", "LEC", "Mono_macs", "Fibroblasts", "Epithelium_KRT16", "CD8_T_cells", "CD4_T_cells", "B_cells", "BEC")
+spatial_metric <- c("proximity_reversed", "proximity_minmax", "density_normalized20", "density_normalized50", "density_normalized100", "density_normalized150", "density_normalized200")
+cside_results <- list()
+cside_results_combined <- list()
+
+for (i in 1:length(spatial_metric)) {
+  for (j in 1:length(cell_types)) {
+  cside_results[[j]] <- read.csv(paste0("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/Cosmx_cside/population_groups_min3_", spatial_metric[i], "/", cell_types[j], "_cell_type_genes_all.csv"))
+  }
+  names(cside_results) <- cell_types
+  cside_results <- cside_results[-2]
+  cside_results_combined[[i]] <- bind_rows(cside_results, .id = "cell_type")
+}
+
+
+names(cside_results_combined) <- spatial_metric
+
+cside_results_combined_cosmx <- bind_rows(cside_results_combined, .id = "spatial_metric")
+
+colnames(cside_results_combined_cosmx)[3] <- "gene_name"
+
+```
+
+## Load results of colocalization analysis 
+
+```{r}
+
+HL_liana_05_single_gene <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/HL_liana_05_single_final.csv")
+
+L_R_final_df<- HL_liana_05_single_gene
+
+##Load filtered df with nichenet results
+## In a separate jupyter notebook, I applied the following filters to the L_R_final_df/HL_liana_05_single_gene results
+#LR_results_filtered <- LR_results %>% filter(target == "Tumor", X300p_.logfdr > 15, sca.LRscore > 0.4, natmi.edge_specificity > 0.01, X300p_effect > 1) %>% arrange(desc(X300p_effect)) -- nichenet results for 4 signatures were also added -- no other filters were applied 
+
+LR_final_filtered_nichenet <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/LR_results_filtered_nichenet_final.csv")
+
+```
+
+## Are any of the ligands by L-R interaction analysis differentially expressed as a function of proximity to HRS cells?  
+
+```{r}
+
+LR_final_filtered_nichenet <- LR_final_filtered_nichenet %>% mutate(ligand_de_cside_density = ifelse(ligand %in% DE_gene_list_cside_density, ligand, NA))
+
+LR_final_filtered_nichenet <- LR_final_filtered_nichenet %>% mutate(ligand_de_cside_proximity = ifelse(ligand %in% DE_gene_list_cside_proximity, ligand, NA))
+
+spatially_DE_genes_density <- intersect(DE_gene_list_cside_density, LR_final_filtered_nichenet %>% select(ligand) %>% pull())
+spatially_DE_genes_density
+
+spatially_DE_genes_proximity <- intersect(DE_gene_list_cside_proximity, LR_final_filtered_nichenet %>% select(ligand) %>% pull())
+spatially_DE_genes_proximity
+
+intersect(spatially_DE_genes_density, spatially_DE_genes_proximity)
+union(spatially_DE_genes_density, spatially_DE_genes_proximity)
+```
+
+## Are any of the receptors by L-R interaction analysis dependencies in Hodgkin cell lines? 
+
+```{r}
+
+CRISPR.hodgkin.combined <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/HL_cell_lines_CRISPR_depmap_analysis/CRISPR.hodgkin.combined.csv")
+
+Hodgkin_dependencies <- CRISPR.hodgkin.combined %>% filter(dependency_score > 0.5) %>% separate(gene, c("gene_name", "gene_id"), sep = " ") %>% select(gene_name) %>% pull(gene_name) %>% unique()
+
+LR_final_filtered_nichenet <- LR_final_filtered_nichenet %>% mutate(receptor_crispr = ifelse(receptor %in% Hodgkin_dependencies, receptor, NA))
+
+receptor_dependencies <- intersect(Hodgkin_dependencies, LR_final_filtered_nichenet %>% select(receptor) %>% pull())
+
+ligand_dependencies <- LR_final_filtered_nichenet %>% filter(receptor %in% receptor_dependencies) %>% select(ligand) %>% pull() %>% unique()
+ligand_dependencies
+
+```
+
+## Add muscat DE results 
+
+```{r}
+DE_results <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/de_muscat_deseq2_level3_RLNvsHL.csv")
+
+DE_results <- DE_results %>% mutate(sig = logFC > 5 & -log10(p_val) > 5)
+
+DE_results <- DE_results %>% mutate(sig_genes = ifelse(sig == TRUE, gene, NA))
+
+#Plot
+ggplot(DE_results %>% filter(cluster_id %in% c("CD4_T_cells", "Monocytes", "Macrophages", "Fibroblasts", "FDC")), aes(x = logFC, y = -log10(p_val), color = cluster_id, alpha = sig)) + 
+  geom_point(size = 0.5) + 
+  theme_classic() +
+  labs(x = "Estimated cell-type specific differential expression", y = "q value (-log10)", color = "Cell type") +
+  geom_vline(xintercept = -0.25, linetype = 'dotted') + geom_vline(xintercept = 0.25, linetype = 'dotted')+scale_alpha_manual("", labels = c('Not significant', 'Significant'), values = c(0.1,1)) +
+#geom_label_repel(aes(label = genes_label),na.rm = TRUE, box.padding = 0.1,  show.legend = F, max.overlaps = 50, label.padding = 0.1, size = 3) + 
+  geom_label_repel(aes(label = sig_genes),na.rm = TRUE, box.padding = 0.1,  show.legend = F, max.overlaps = 20, label.padding = 0.1, size = 3) + 
+  facet_wrap(vars(cluster_id))
+
+#Select only significantly DE genes 
+DE_results_sig <- DE_results %>% filter(logFC > 1, -log10(p_val) > 2)
+
+#Add information to L_R analysis 
+
+LR_final_filtered_nichenet <- LR_final_filtered_nichenet %>% left_join(DE_results_sig %>% select(gene, cluster_id, baseMean, logFC, p_val, p_adj.loc, p_adj.glb), by = c("ligand" = "gene", "source" =  "cluster_id"))
+
+```
+
+## Add mean rank and aggregate rank columns for nichenet results 
+
+```{r}
+
+nichenet_mean_ranks <- LR_final_filtered_nichenet %>% group_by(ligand) %>% filter(signature != "nfkb_signature") %>% summarize(mean_rank_stat6 = mean(rank))
+
+## Add the mean ranks to the dataframe 
+
+LR_final_filtered_nichenet <- LR_final_filtered_nichenet %>% left_join(nichenet_mean_ranks, by = "ligand")
+
+##Calculate aggregate ranks 
+library(RobustRankAggreg)
+
+nfkb_signature_genes <- LR_final_filtered_nichenet %>% filter(signature == "nfkb_signature") %>% arrange(rank) %>% select(ligand) %>% unique() %>% pull()
+
+stat6_cgn_signature_genes <- LR_final_filtered_nichenet %>% filter(signature == "stat6_cgn_signature") %>% arrange(rank) %>% select(ligand) %>% unique() %>% pull()
+
+stat6_01_genes <- LR_final_filtered_nichenet %>% filter(signature == "stat6_01") %>% arrange(rank) %>% select(ligand) %>% unique() %>% pull()
+
+stat6_02_genes <- LR_final_filtered_nichenet %>% filter(signature == "stat6_02") %>% arrange(rank) %>% select(ligand) %>% unique() %>% pull()
+
+  
+glist <- list(stat6_cgn_signature_genes, stat6_01_genes, stat6_02_genes)
+
+agg_ranks <- aggregateRanks(glist = glist, N = length(glist[[1]]))
+
+##Add aggregate ranks 
+
+LR_final_filtered_nichenet <- LR_final_filtered_nichenet %>% left_join(agg_ranks, by = c("ligand" = "Name"))
+
+
+top_stat6_genes <- LR_final_filtered_nichenet %>% arrange(Score) %>% select(ligand) %>% pull() %>% unique() %>% head(15)
+top_stat6_genes
+
+top_nfkb_genes <- LR_final_filtered_nichenet %>% filter(signature == "nfkb_signature") %>% arrange(rank) %>% select(ligand) %>% pull() %>% unique() %>% head(15)
+top_nfkb_genes
+  
+  
+other_genes <- LR_final_filtered_nichenet %>% filter(!is.na(ligand_de_cside_density) | !is.na(ligand_de_cside_proximity) | !is.na(receptor_crispr)) %>% select(ligand) %>% pull() %>% unique()
+other_genes
+
+final_gene_set <- union(top_stat6_genes, c(top_nfkb_genes, other_genes))
+final_gene_set
+
+#Filter table to just the final gene set for validation 
+
+final_gene_set_table <- LR_final_filtered_nichenet %>% filter(ligand %in% final_gene_set)
+  
+```
+
+## Save results 
+
+```{r}
+write.csv(LR_final_filtered_nichenet, "/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/LR_results_filtered_nichenet_final_ranked.csv")
+
+write.csv(final_gene_set_table, "/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/final_gene_set_table.csv")
+
+write.csv(final_gene_set, "/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/final_gene_set.csv")
+
+```
+
+## Gene set enrichment analysis 
+
+```{r}
+LR_final_filtered_nichenet <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/LR_results_filtered_nichenet_final_ranked.csv")
+gost.res <- gost(query = unique(LR_final_filtered_nichenet$ligand), organism = "hsapiens", correction_method = "fdr", sources = c("REAC", "KEGG", "WP"), evcodes = TRUE)
+gostplot(gostres = gost.res, interactive = T, capped = T) #set interactive=FALSE to get plot for publications
+
+##Hallmark gene sets 
+hallmark_sets <- msigdbr(species = "Homo sapiens", category = "H") %>% 
+  dplyr::select(gs_name, human_gene_symbol)
+
+hallmark_results <- enricher(unique(LR_final_filtered_nichenet$ligand), TERM2GENE=hallmark_sets)
+
+hallmark_results <- pairwise_termsim(hallmark_results)
+emapplot(hallmark_results, cex_category = 0.5, cex_label_category = 0.5)
+
+##Curated MSIGDB gene sets 
+C2_sets <- msigdbr(species = "Homo sapiens", category = "C2") %>% 
+  dplyr::select(gs_name, human_gene_symbol)
+
+C2_results <- enricher(unique(LR_final_filtered_nichenet$ligand), TERM2GENE=C2_sets)
+
+C2_results <- pairwise_termsim(C2_results)
+#treeplot(C2_results,  cex_category = 0.5, cex_label_category = 0.5, showCategory = 50)
+emapplot(C2_results, cex_category = 0.5, cex_label_category = 0.5, showCategory = 50)
+
+##The treeplots and enrichment map plots are ueseful - they cluster similar gene sets together and help with interpretation
+
+reactome_results <- enrichPathway(gene=entrez_id_conv$ENTREZID, pvalueCutoff = 0.05, readable=TRUE)
+reactome_results <- pairwise_termsim(reactome_results)
+
+treeplot(reactome_results, showCategory = 50)
+emapplot(reactome_results,  cex_category = 0.5, cex_label_category = 0.5, showCategory = 50)
+reactome_results_df <- reactome_results@result
+
+dotplot(reactome_results, showCategory=10)
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/LR_enrichment_analysis.pdf")
+```
+
+## Add columns with information on differential expression of ligands in HRS cells
+
+```{r}
+##Explore results 
+LR_final_filtered_nichenet <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/LR_results_filtered_nichenet_final_ranked.csv")
+
+##Add DE genes in primary HRS cells and cell lines as column
+
+##Load DE gene sets 
+
+hrs_markers_deseq <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/HRS_DE_genes/hrs_markers_deseq.csv")
+
+hrs_vs_B_markers_deseq <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/HRS_DE_genes/hrs_vs_B_markers_deseq.csv")
+
+hrs_cell_lines_vs_other_deseq <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Results/HRS_cell_signature_derivation/CHL_other_results_CCLE.csv")
+
+#Extract significantly DE genes 
+
+hrs_markers_deseq_de <- hrs_markers_deseq %>% filter(avg_log2FC > 1, p_val_adj < 0.05) %>% select(X) %>% pull()
+
+hrs_vs_B_markers_deseq_de <- hrs_vs_B_markers_deseq %>% filter(avg_log2FC > 1, p_val_adj < 0.05) %>% select(X) %>% pull()
+
+hrs_cell_lines_vs_other_deseq_de <- hrs_cell_lines_vs_other_deseq %>% filter(log2FoldChange > 1, padj < 0.05) %>% select(X) %>% pull() %>% word(1)
+
+#Add DE genes as columns 
+
+LR_final_filtered_nichenet <- LR_final_filtered_nichenet %>% mutate(hrs_vs_all_de_ligand = ifelse(ligand %in% hrs_markers_deseq_de, ligand, NA))
+
+LR_final_filtered_nichenet <- LR_final_filtered_nichenet %>% mutate(hrs_vs_B_de_ligand = ifelse(ligand %in% hrs_vs_B_markers_deseq_de, ligand, NA))
+
+LR_final_filtered_nichenet <- LR_final_filtered_nichenet %>% mutate(hrs_cell_lines_ligand = ifelse(ligand %in% hrs_cell_lines_vs_other_deseq_de, ligand, NA))
+
+chord_freq(LR_final_filtered_nichenet)
+
+## Save object 
+
+write.csv(LR_final_filtered_nichenet, "/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/LR_results_filtered_nichenet_final_ranked_DE_genes.csv")
+
+```
+
+##Visualize results and generate final list of ligand-receptor intractions for validation
+
+```{r}
+##Visualize ligand-receptor interaction analysis results 
+LR_final_filtered_nichenet <- read.csv("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/LR_results_filtered_nichenet_final_ranked_DE_genes.csv")
+
+#Rename column names so the dataframe is compatible with the liana_dotplot function 
+LR_final_filtered_nichenet <- LR_final_filtered_nichenet %>% rename(ligand = ligand.complex, receptor = receptor.complex)
+
+## Add spatial proximity product metrics 
+
+LR_final_filtered_nichenet <- LR_final_filtered_nichenet %>% mutate(X15p_product = X15p_effect*X15p_.logfdr, X30p_product = X30p_effect*X30p_.logfdr, X100p_product = X100p_effect*X100p_.logfdr, X300p_product = X300p_effect*X300p_.logfdr)
+
+cell_types_rest <- c("Tumor", "Macrophages", "Fibroblasts", "CD4_T_cells")
+
+## Ranked by colocalization 
+
+LR_final_filtered_nichenet %>% filter(source %in% cell_types_rest) %>% arrange(desc(X300p_effect), desc(sca.LRscore)) %>% liana_dotplot(ntop = 20)
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/LR_analysis_bubble_plot_4_celltypes.pdf", width = 13, height = 7)
+
+##generate validation list across all cell types
+
+validation_list_df <- LR_final_filtered_nichenet %>% filter(natmi.edge_specificity > 0.02 & X300p_product > 20 & sca.LRscore > 0.4) %>% select(source, ligand.complex, receptor.complex, ligand_de_cside_density, ligand_de_cside_proximity, hrs_vs_B_de_ligand, hrs_vs_all_de_ligand, hrs_cell_lines_ligand, signature, rank, receptor_crispr, natmi.edge_specificity, sca.LRscore) %>% unique() %>% pivot_wider(names_from = signature, values_from = rank) %>% unique() %>% group_by(ligand.complex, ligand_de_cside_density, ligand_de_cside_proximity, hrs_vs_B_de_ligand, hrs_vs_all_de_ligand, hrs_cell_lines_ligand, nfkb_signature, stat6_cgn_signature, stat6_01, stat6_02, receptor_crispr) %>% summarise(source = paste(source, collapse = ", "), receptor.complex = paste(receptor.complex, collapse = ", ")) %>% unique()
+
+#Add a single column with muscat DE results 
+validation_list_df <- validation_list_df %>% left_join(LR_final_filtered_nichenet %>% mutate(muscat_DE = ifelse(is.na(logFC) == FALSE, paste(source, "_", logFC), NA)) %>% select(ligand.complex, muscat_DE) %>% filter(is.na(muscat_DE) == FALSE) %>% unique(), by = "ligand.complex")
+
+#FILTER CRITERIA
+validation_list <- LR_final_filtered_nichenet %>% filter(natmi.edge_specificity > 0.02 & X300p_product > 20 & sca.LRscore > 0.4)  %>% select(ligand.complex) %>% unique() %>% pull()
+
+write.csv(validation_list_df, "/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/validation_list_df.csv")
+
+```
+
+##Add a column indicating the target cell types of the interaction (in addition to tumor cells)
+
+```{r}
+
+#Load pre-filtered dataset
+L_R_final_df <- read.csv( "/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/L_R_final.csv")
+
+#Add column with product of p value and effect size of permutation test
+L_R_final_df <- L_R_final_df %>% mutate(X15p_product = X15p_effect*X15p_.logfdr, X30p_product = X30p_effect*X30p_.logfdr, X100p_product = X100p_effect*X100p_.logfdr, X300p_product = X300p_effect*X300p_.logfdr)
+
+##Create a column indicating target cell types of each interaction
+
+source_target_agg <- L_R_final_df %>% filter(natmi.edge_specificity > 0.02 & X300p_product > 20 & sca.LRscore > 0.4) %>% select(source, target, ligand.complex, receptor.complex) %>% unique() %>% group_by(ligand.complex,receptor.complex) %>% unique() %>% summarise(source = paste(source, collapse = ", "), target = paste(target, collapse = ", ")) %>% unique()
+
+ligand_target <- L_R_final_df %>% filter(natmi.edge_specificity > 0.02 & X300p_product > 20 & sca.LRscore > 0.4) %>% select(target, ligand.complex) %>% unique() %>% group_by(ligand.complex) %>% unique() %>% summarise(target = paste(target, collapse = ", ")) %>% unique()
+
+
+##Add these columns to the validation list 
+
+validation_list_df <- validation_list_df %>% left_join(ligand_target, by = "ligand.complex")
+
+##Add column indicating if interaction seen in B cells and tumor cells
+
+validation_list_df <- validation_list_df %>% mutate(is_tumor_target = str_detect(target, "Tumor"))
+validation_list_df <- validation_list_df %>% mutate(is_B_target = str_detect(target, "B_cells"))
+validation_list_targets <- validation_list_df %>% ungroup() %>% select(ligand.complex, target, is_B_target) %>% unique()
+
+write.csv(validation_list_df, "/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/validation_list_df.csv")
+write.csv(validation_list_targets, "/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/is_B_target.csv")
+```
+
+## Scatter plot visualization of ligand-receptor interactions 
+
+```{r}
+
+##Plot pre-filtered dataset 
+
+L_R_final_df <- read.csv( "/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/L_R_final.csv")
+
+##Subset df and add spatial product metrics 
+
+L_R_final_df_immune_to_tumor <- L_R_final_df %>% filter(target == "Tumor")
+
+L_R_final_df_immune_to_tumor <- L_R_final_df_immune_to_tumor %>% mutate(X15p_product = X15p_effect*X15p_.logfdr, X30p_product = X30p_effect*X30p_.logfdr, X100p_product = X100p_effect*X100p_.logfdr, X300p_product = X300p_effect*X300p_.logfdr)
+
+
+##Plot 4 cell types (immune to tumor) spatial vs LRscore
+
+ggplot(L_R_final_df_immune_to_tumor %>% filter(natmi.edge_specificity > 0.02, source %in% c("CD4_T_cells", "Macrophages", "Fibroblasts", "Tumor"),  ligand.complex != "IL13") %>% select(source, X300p_product, sca.LRscore, complex_pair, natmi.edge_specificity, highlight, sig) %>% unique(), aes(x = X300p_product, y = sca.LRscore, color = source, alpha = sig))+
+    #geom_label_repel(aes(label = highlight),na.rm = TRUE, show.legend = F, size = 3, min.segment.length = 0, force_pull = 0, max.overlaps = 10000) + 
+  geom_point() + theme_classic() + scale_color_npg()
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/L_R_spatial_vs_LRScore_3_cell_types.pdf", width = 6, height = 5)
+
+
+##Repeat the same but now in other direction i.e. tumor to immune 
+
+L_R_final_df_tumor_to_immune <- L_R_final_df %>% filter(source == "Tumor")
+
+L_R_final_df_tumor_to_immune <- L_R_final_df_tumor_to_immune %>% mutate(X15p_product = X15p_effect*X15p_.logfdr, X30p_product = X30p_effect*X30p_.logfdr, X100p_product = X100p_effect*X100p_.logfdr, X300p_product = X300p_effect*X300p_.logfdr)
+
+##Highlight genes based on spatial metric and LRScore
+
+highlight_genes <- L_R_final_df_tumor_to_immune %>% filter(X300p_product > 50 & sca.LRscore > 0.7) %>% select(complex_pair) %>% pull()
+
+L_R_final_df_tumor_to_immune <- L_R_final_df_tumor_to_immune %>% mutate(highlight = ifelse(complex_pair %in% highlight_genes, complex_pair, NA), sig = complex_pair %in% highlight_genes)
+
+ggplot(L_R_final_df_tumor_to_immune %>% filter(natmi.edge_specificity > 0.02, target %in% c("CD4_T_cells", "CD8_T_cells", "Macrophages", "Fibroblasts"),  ligand.complex != "IL13") %>% select(target, X300p_product, sca.LRscore, complex_pair, natmi.edge_specificity, highlight, sig) %>% unique(), aes(x = X300p_product, y = sca.LRscore, color = target, alpha = sig))+
+    #geom_label_repel(aes(label = highlight),na.rm = TRUE, show.legend = F, size = 3, min.segment.length = 0, force_pull = 0, max.overlaps = 10000) + 
+  geom_point() + theme_classic() + scale_color_npg()
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/Tumor_to_immune_L_R_spatial_vs_LRScore_5_cell_types.pdf", width = 6, height = 5)
+
+##L-R bubble plot 
+
+cell_types_rest <- c("CD4_T_cells", "CD8_T_cells", "Macrophages", "Fibroblasts")
+
+L_R_final_df_tumor_to_immune %>% filter(natmi.edge_specificity > 0.02, X300p_product > 50, sca.LRscore > 0.7, source == "Tumor", target %in% cell_types_rest) %>% arrange(desc(X300p_effect), desc(sca.LRscore)) %>% liana_dotplot(ntop = 20)
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/Tumor_to_immune_LR_analysis_bubble_plot_4_celltypes.pdf", width = 13, height = 7)
+```
+
+##Focus CSIDE analysis on spatially prioritized ligand-receptor interactions 
+
+```{r}
+
+##Use same criteria as used for final validation 
+L_R_subset_ligands <- L_R_final_df %>% filter(natmi.edge_specificity > 0.02 & X300p_product > 20 & sca.LRscore > 0.4) %>% select(ligand.complex) %>% distinct() %>% pull()
+
+cside_results_combined_slideseq_LR_subset_by_LIANA <- cside_results_combined_slideseq_LR %>% filter(gene_name %in% L_R_subset_ligands)
+
+#change sig column 
+cside_results_combined_slideseq_LR_subset_by_LIANA <- cside_results_combined_slideseq_LR_subset_by_LIANA %>% mutate(sig = log_fc_est > 0.50 & q_val < 0.001 & ct_prop > 0.5) %>% mutate(sig_genes = ifelse(sig == TRUE, gene_name, NA))
+
+cside_results_combined_slideseq_LR_subset_by_LIANA <- cside_results_combined_slideseq_LR_subset_by_LIANA %>% mutate(highlight = ifelse(sig == TRUE, gene_name, NA))
+
+highlight_points <- cside_results_combined_slideseq_LR_subset_by_LIANA %>% filter(sig == TRUE, cell_type %in% c("CD4_T_cells","Monocytes/macrophages", "FDC"), spatial_metric == "density", gene_name != "PKM")
+
+cside_results_combined_slideseq_LR_subset_by_LIANA <- cside_results_combined_slideseq_LR_subset_by_LIANA %>% mutate(sig = log_fc_est > 0.50 & q_val < 0.05 & ct_prop > 0.5) %>% mutate(sig_genes = ifelse(sig == TRUE, gene_name, NA))
+
+highlight_points <- cside_results_combined_slideseq_LR_subset_by_LIANA %>% filter(sig == TRUE, cell_type %in% c("CD4_T_cells","Monocytes/macrophages", "FDC"), spatial_metric == "density", gene_name != "PKM")
+
+cside_results_combined_slideseq_LR_subset_by_LIANA %>% filter(cell_type %in% c("CD4_T_cells","Monocytes/macrophages", "FDC"), ct_prop > 0.5, gene_name != "PKM", spatial_metric == "density") %>%
+ggplot(aes(x = log_fc_est, y = -log10(q_val), color = cell_type, label = sig_genes, alpha = sig)) + 
+  geom_point(size = 1) + 
+  theme_classic() +
+  coord_cartesian(xlim = c(-1.8,1.8), ylim = c(0,15)) + 
+  labs(x = "Estimated cell-type specific differential expression", y = "q value (-log10)", color = "Cell type") +
+  geom_vline(xintercept = -0.5, linetype = 'dotted') + geom_vline(xintercept = 0.5, linetype = 'dotted')+scale_alpha_manual("", labels = c('Not significant', 'Significant'), values = c(0.5,1)) +
+  geom_label_repel(aes(label = sig_genes),na.rm = TRUE, box.padding = 0.1,  show.legend = F, max.overlaps = 20, label.padding = 0.1, size = 4) +
+  theme(text = element_text(size = 14)) +
+  geom_point(data = highlight_points, aes(x = log_fc_est, y = -log10(q_val)), color = 'red', size = 2) +
+  scale_color_discrete(labels = c("CD4+ T cell", "Monocytes/macrophages", "FDC")) +
+    guides(colour = guide_legend(override.aes = list(size=5))) + scale_color_npg()
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/cside_results_CD4_T_macs_FDC_volcano_plot_q0.05.pdf", width = 8, height = 7)
+
+##Repeat with spatial metric as proximity
+
+cside_results_combined_slideseq_LR_subset_by_LIANA <- cside_results_combined_slideseq_LR_subset_by_LIANA %>% mutate(sig = log_fc_est > 0.50 & q_val < 0.001 & ct_prop > 0.5) %>% mutate(sig_genes = ifelse(sig == TRUE, gene_name, NA))
+
+highlight_points <- cside_results_combined_slideseq_LR_subset_by_LIANA %>% filter(sig == TRUE, cell_type %in% c("CD4_T_cells","Monocytes/macrophages", "FDC"), spatial_metric == "proximity", gene_name != "PKM")
+
+cside_results_combined_slideseq_LR_subset_by_LIANA %>% filter(cell_type %in% c("CD4_T_cells","Monocytes/macrophages", "FDC"), ct_prop > 0.5, gene_name != "PKM", spatial_metric == "proximity") %>%
+ggplot(aes(x = log_fc_est, y = -log10(q_val), color = cell_type, label = sig_genes, alpha = sig)) + 
+  geom_point(size = 1) + 
+  theme_classic() +
+  coord_cartesian(xlim = c(-2,2), ylim = c(0,18)) + 
+  labs(x = "Estimated cell-type specific differential expression", y = "q value (-log10)", color = "Cell type") +
+  geom_vline(xintercept = -0.5, linetype = 'dotted') + geom_vline(xintercept = 0.5, linetype = 'dotted')+scale_alpha_manual("", labels = c('Not significant', 'Significant'), values = c(0.5,1)) +
+  geom_label_repel(aes(label = sig_genes),na.rm = TRUE, box.padding = 0.1,  show.legend = F, max.overlaps = 20, label.padding = 0.1, size = 4) +
+  theme(text = element_text(size = 14)) +
+  geom_point(data = highlight_points, aes(x = log_fc_est, y = -log10(q_val)), color = 'red', size = 2) +
+  scale_color_discrete(labels = c("CD4+ T cell", "Monocytes/macrophages", "FDC")) +
+    guides(colour = guide_legend(override.aes = list(size=5))) + scale_color_npg()
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/cside_results_CD4_T_macs_FDC_volcano_plot_proximity.pdf", width = 8, height = 7)
+
+cside_results_combined_slideseq_LR_subset_by_LIANA <- cside_results_combined_slideseq_LR_subset_by_LIANA %>% mutate(sig = log_fc_est > 0.50 & q_val < 0.05 & ct_prop > 0.5) %>% mutate(sig_genes = ifelse(sig == TRUE, gene_name, NA))
+
+highlight_points <- cside_results_combined_slideseq_LR_subset_by_LIANA %>% filter(sig == TRUE, cell_type %in% c("CD4_T_cells","Monocytes/macrophages", "FDC"), spatial_metric == "proximity", gene_name != "PKM")
+
+cside_results_combined_slideseq_LR_subset_by_LIANA %>% filter(cell_type %in% c("CD4_T_cells","Monocytes/macrophages", "FDC"), ct_prop > 0.5, gene_name != "PKM", spatial_metric == "proximity") %>%
+ggplot(aes(x = log_fc_est, y = -log10(q_val), color = cell_type, label = sig_genes, alpha = sig)) + 
+  geom_point(size = 1) + 
+  theme_classic() +
+  coord_cartesian(xlim = c(-2,2), ylim = c(0,18)) + 
+  labs(x = "Estimated cell-type specific differential expression", y = "q value (-log10)", color = "Cell type") +
+  geom_vline(xintercept = -0.5, linetype = 'dotted') + geom_vline(xintercept = 0.5, linetype = 'dotted')+scale_alpha_manual("", labels = c('Not significant', 'Significant'), values = c(0.5,1)) +
+  geom_label_repel(aes(label = sig_genes),na.rm = TRUE, box.padding = 0.1,  show.legend = F, max.overlaps = 20, label.padding = 0.1, size = 4) +
+  theme(text = element_text(size = 14)) +
+  geom_point(data = highlight_points, aes(x = log_fc_est, y = -log10(q_val)), color = 'red', size = 2) +
+  scale_color_discrete(labels = c("CD4+ T cell", "Monocytes/macrophages", "FDC")) +
+    guides(colour = guide_legend(override.aes = list(size=5))) + scale_color_npg()
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/cside_results_CD4_T_macs_FDC_volcano_plot_proximity_q0.05.pdf", width = 8, height = 7)
+
+##Repeat with cosmx cside results 
+
+cside_results_combined_cosmx_subset_by_LIANA <- cside_results_combined_cosmx %>% filter(gene_name %in% L_R_subset_ligands)
+
+#change sig column 
+cside_results_combined_cosmx_subset_by_LIANA <- cside_results_combined_cosmx_subset_by_LIANA %>% mutate(sig = log_fc_est > 0.50 & q_val < 0.10 & ct_prop > 0.5) %>% mutate(sig_genes = ifelse(sig == TRUE, gene_name, NA))
+
+cside_results_combined_cosmx_subset_by_LIANA <- cside_results_combined_cosmx_subset_by_LIANA %>% mutate(highlight = ifelse(sig == TRUE, gene_name, NA))
+#highlight_points <- cside_results_combined_slideseq_LR_subset_by_LIANA %>% filter(highlight %in% highlight_genes, cell_type %in% c("CD4_T_cells","Monocytes/macrophages", "FDC"), ct_prop > 0.5, spatial_metric == "density", gene_name != "PKM")
+
+highlight_points <- cside_results_combined_cosmx_subset_by_LIANA %>% filter(sig == TRUE, spatial_metric == "proximity_reversed", gene_name != "HSP90AA1", cell_type %in% c("CD4_T_cells", "CD8_T_cells", "Fibroblasts", "Mono_macs"))
+
+#proximity metric
+
+cside_results_combined_cosmx_subset_by_LIANA %>% filter(spatial_metric == "proximity_reversed", ct_prop > 0.5, gene_name != "HSP90AA1", cell_type %in% c("CD4_T_cells", "CD8_T_cells", "Fibroblasts", "Mono_macs")) %>%
+ggplot(aes(x = log_fc_est, y = -log10(q_val), color = cell_type, label = sig_genes, alpha = sig)) + 
+  geom_point(size = 1) + 
+  theme_classic() +
+  coord_cartesian(ylim = c(0,5)) + 
+  labs(x = "Estimated cell-type specific differential expression", y = "q value (-log10)", color = "Cell type") +
+  geom_vline(xintercept = -0.5, linetype = 'dotted') + geom_vline(xintercept = 0.5, linetype = 'dotted')+scale_alpha_manual("", labels = c('Not significant', 'Significant'), values = c(0.1,1)) +
+  geom_text_repel(aes(label = sig_genes),na.rm = TRUE, box.padding = 0.1,  show.legend = F, max.overlaps = 20, label.padding = 0.1, size = 4) +
+  theme(text = element_text(size = 14)) +
+  geom_point(data = highlight_points, aes(x = log_fc_est, y = -log10(q_val)), color = 'red', size = 2) +
+  #scale_color_discrete(labels = c("CD4+ T cell", "Monocytes/macrophages", "FDC")) +
+    guides(colour = guide_legend(override.aes = list(size=5))) + scale_color_npg()
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/cside_results_cosmx_q0.10_proximity.pdf", width = 10, height = 8)
+
+#Density metric
+
+highlight_points <- cside_results_combined_cosmx_subset_by_LIANA %>% filter(sig == TRUE, spatial_metric == "density_normalized20", gene_name != "HSP90AA1", cell_type %in% c("CD4_T_cells", "CD8_T_cells", "Fibroblasts", "Mono_macs", "mDC"))
+
+cside_results_combined_cosmx_subset_by_LIANA %>% filter(spatial_metric == "density_normalized20", ct_prop > 0.5, gene_name != "HSP90AA1", cell_type %in% c("CD4_T_cells", "CD8_T_cells", "Fibroblasts", "Mono_macs", "mDC")) %>%
+ggplot(aes(x = log_fc_est, y = -log10(q_val), color = cell_type, label = sig_genes, alpha = sig)) + 
+  geom_point(size = 1) + 
+  theme_classic() +
+  #coord_cartesian(ylim = c(0,5)) + 
+  labs(x = "Estimated cell-type specific differential expression", y = "q value (-log10)", color = "Cell type") +
+  geom_vline(xintercept = -0.5, linetype = 'dotted') + geom_vline(xintercept = 0.5, linetype = 'dotted')+scale_alpha_manual("", labels = c('Not significant', 'Significant'), values = c(0.1,1)) +
+  geom_text_repel(aes(label = sig_genes),na.rm = TRUE, box.padding = 0.1,  show.legend = F, max.overlaps = 20, label.padding = 0.1, size = 4) +
+  theme(text = element_text(size = 14)) +
+  geom_point(data = highlight_points, aes(x = log_fc_est, y = -log10(q_val)), color = 'red', size = 2) +
+  #scale_color_discrete(labels = c("CD4+ T cell", "Monocytes/macrophages", "FDC")) +
+    guides(colour = guide_legend(override.aes = list(size=5))) + scale_color_npg()
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/cside_results_cosmx_q0.10_density_20.pdf", width = 10, height = 8)
+
+##Enrichment analysis 
+
+cside_combined_LR_genes <- cside_results_combined_slideseq_LR %>% filter(log_fc_est > 0.5, q_val < 0.05, ct_prop > 0.5) %>% select(gene_name) %>% pull() %>% unique()
+cside_combined_LR_subset_by_LIANA_genes <- cside_results_combined_slideseq_LR_subset_by_LIANA %>% filter(log_fc_est > 0.5, q_val < 0.05, ct_prop > 0.5) %>% select(gene_name) %>% pull() %>% unique()
+
+gost.res <- gost(query = unique(cside_combined_LR_genes), organism = "hsapiens", correction_method = "fdr", sources = c("REAC", "KEGG", "WP"), evcodes = TRUE)
+gostplot(gostres = gost.res, interactive = T, capped = T) #set interactive=FALSE to get plot for publications
+
+##Hallmark gene sets 
+hallmark_sets <- msigdbr(species = "Homo sapiens", category = "H") %>% 
+  dplyr::select(gs_name, human_gene_symbol)
+
+hallmark_results <- enricher(unique(cside_combined_LR_genes), TERM2GENE=hallmark_sets)
+
+hallmark_results <- pairwise_termsim(hallmark_results)
+emapplot(hallmark_results, cex_category = 0.5, cex_label_category = 0.5)
+dotplot(hallmark_results, showCategory=10)
+
+##Curated MSIGDB gene sets 
+C2_sets <- msigdbr(species = "Homo sapiens", category = "C2") %>% 
+  dplyr::select(gs_name, human_gene_symbol)
+
+C2_results <- enricher(unique(cside_combined_LR_genes), TERM2GENE=C2_sets)
+
+C2_results <- pairwise_termsim(C2_results)
+#treeplot(C2_results,  cex_category = 0.5, cex_label_category = 0.5, showCategory = 50)
+emapplot(C2_results, cex_category = 0.5, cex_label_category = 0.5, showCategory = 50)
+dotplot(C2_results, showCategory=30)
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/cside_enrichment_analysis_C2.pdf", height = 20, width = 7)
+
+reactome_results <- enrichPathway(gene=entrez_id_conv$ENTREZID, pvalueCutoff = 0.05, readable=TRUE)
+reactome_results <- pairwise_termsim(reactome_results)
+
+treeplot(reactome_results, showCategory = 50)
+emapplot(reactome_results,  cex_category = 0.5, cex_label_category = 0.5, showCategory = 50)
+reactome_results_df <- reactome_results@result
+
+dotplot(reactome_results, showCategory=30)
+
+ggsave("/Users/vshanmug/Documents/Lymphoma_spatial_project/Analysis/Data/L_R_analysis/cside_enrichment_analysis.pdf", height = 20, width = 7)
+
+```
+
+
